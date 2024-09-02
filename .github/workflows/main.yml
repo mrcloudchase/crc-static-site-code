@@ -1,0 +1,64 @@
+name: Deploy Static Site
+
+# Deploy the static site on push to main branch or on successful deployment of infrastructure
+on:
+  push:
+    branches:
+      - main
+  repository_dispatch:
+    types: [infra-deployment-success]
+
+# Define permissions for the workflow
+permissions:
+  id-token: write
+  contents: write
+
+# Define the jobs for the workflow
+jobs:
+  deploy-static-site:
+    runs-on: ubuntu-latest
+
+    # Check out the code
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Log in to Azure using Federated Identity Credentials using secrets
+    - name: Log in to Azure using Federated Identity Credentials
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    # Upload files to $web container using Azure AD based authentication
+    - name: Upload files to $web container using Azure AD
+      run: |
+        STORAGE_ACCOUNT_NAME=${{ github.event.client_payload.storage_account_name }}
+        RESOURCE_GROUP_NAME=${{ github.event.client_payload.resource_group_name }}
+        az storage blob upload-batch \
+          --account-name $STORAGE_ACCOUNT_NAME \
+          --destination '$web' \
+          --source src \
+          --overwrite \
+          --auth-mode login
+
+    # Enable static website config using Azure AD based authentication
+    - name: Enable Static Website
+      run: |
+        STORAGE_ACCOUNT_NAME=${{ github.event.client_payload.storage_account_name }}
+        RESOURCE_GROUP_NAME=${{ github.event.client_payload.resource_group_name }}
+        az storage blob service-properties update \
+          --account-name $STORAGE_ACCOUNT_NAME \
+          --static-website \
+          --index-document index.html \
+          --404-document error.html \
+          --auth-mode login
+    
+    # Output the static website URL and information about the storage account and resource group where the static site is deployed
+    - name: Output Static Website URL
+      run: |
+        STORAGE_ACCOUNT_NAME=${{ github.event.client_payload.storage_account_name }}
+        RESOURCE_GROUP_NAME=${{ github.event.client_payload.resource_group_name }}
+        STATIC_SITE_URL=$(az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP_NAME --query 'primaryEndpoints.web' --output tsv)
+        echo "Static Site URL: $STATIC_SITE_URL"
